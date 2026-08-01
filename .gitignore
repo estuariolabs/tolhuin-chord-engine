@@ -1,0 +1,18 @@
+# Binarios de test compilados
+test/test_dsp
+test/test_harmony
+test/test_evloop
+*.exe
+*.o
+*.obj
+
+# Salidas de render/tests
+test/out_*.wav
+*.wav
+
+# Python
+__pycache__/
+*.pyc
+
+# Config local de herramientas
+.claude/
