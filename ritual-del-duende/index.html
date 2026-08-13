@@ -379,8 +379,34 @@ function ditherPatch(ctx, x, y, w, h, colorA, colorB, density, seed) {
   }
 }
 
+/* ---- el duende: nunca un sprite fijo, sólo una insinuación rarísima y
+   fugaz en algún rincón oscuro de la casa. No es un objeto: no responde a
+   clicks, no tiene estado propio más que "está o no está este frame". ---- */
+// coordenadas elegidas para caer siempre sobre la pared (nunca sobre el
+// fondo negro puro fuera del arco): ahí una sombra un poco más oscura que
+// el resto se nota apenas; sobre negro puro sería literalmente invisible.
+const DUENDE_SPOTS = [
+  { x: 60, y: 50 },   // hueco entre la pipa y la ventana
+  { x: 144, y: 48 },  // hueco entre la ventana y la repisa
+  { x: 70, y: 86 },   // hueco entre la pipa, el libro y el brasero
+  { x: 128, y: 78 },  // hueco entre el brasero, la repisa y las piedras
+];
+
+function drawDuende(ctx, spot, showGlint) {
+  const { x, y } = spot;
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  // silueta encorvada, deliberadamente ambigua: nunca un personaje "limpio"
+  px(ctx, x, y + 3, 3, 2, PAL.black);
+  px(ctx, x, y, 2, 4, PAL.black);
+  px(ctx, x - 1, y + 4, 1, 1, PAL.black);
+  ctx.globalAlpha = 0.35;
+  if (showGlint) px(ctx, x, y + 1, 1, 1, PAL.greenHi); // ¿un ojo? ya no está.
+  ctx.restore();
+}
+
 /* ---- fondo: casa-hueco de árbol, vista de corte interior ---- */
-function drawHouse(ctx, W, H, tick) {
+function drawHouse(ctx, W, H, tick, duende) {
   px(ctx, 0, 0, W, H, PAL.black);
 
   // pared interior del tronco: arco irregular
@@ -420,6 +446,8 @@ function drawHouse(ctx, W, H, tick) {
 
   // textura de humo viejo sobre las paredes
   ditherPatch(ctx, 4, 4, W - 8, H - 26, PAL.wallLo, PAL.wall, 0.06, 91 + tick);
+
+  if (duende) drawDuende(ctx, DUENDE_SPOTS[duende.spot], duende.glint);
 }
 
 /* ---- brasero: 4 estados, 2 frames de parpadeo cada uno ---- */
@@ -565,6 +593,7 @@ function App() {
   const [braseroState, setBraseroState] = useState(0);
   const [tick, setTick] = useState(0);
   const [lastTouched, setLastTouched] = useState(null);
+  const [duende, setDuende] = useState(null); // { spot, glint } | null — un frame nada más
 
   // reloj de frames discreto: TODO en la escena se redibuja a saltos,
   // nunca con transición css.
@@ -572,6 +601,22 @@ function App() {
     const id = setInterval(() => setTick((t) => t + 1), 260);
     return () => clearInterval(id);
   }, []);
+
+  // el duende: casi nunca aparece, y cuando aparece dura un solo tick
+  // (~260ms). No es un objeto tocable ni tiene mecánica propia — es sólo
+  // una sombra de más en un rincón, ahí y no ahí.
+  useEffect(() => {
+    setDuende((prev) => {
+      if (prev) return null; // ya se mostró un tick, se va
+      if (Math.random() < 0.01) {
+        return {
+          spot: Math.floor(Math.random() * DUENDE_SPOTS.length),
+          glint: Math.random() < 0.4,
+        };
+      }
+      return null;
+    });
+  }, [tick]);
 
   // ruido crt: reposiciona el filtro de turbulencia a saltos (estática)
   useEffect(() => {
@@ -598,7 +643,7 @@ function App() {
   }, []);
 
   const W = 200, H = 120;
-  const drawHouseCb = useCallback((ctx) => drawHouse(ctx, W, H, tick), [tick]);
+  const drawHouseCb = useCallback((ctx) => drawHouse(ctx, W, H, tick, duende), [tick, duende]);
   const drawBraseroCb = useCallback((ctx) => drawBrasero(ctx, braseroState, tick), [braseroState, tick]);
   const drawPipaCb = useCallback((ctx) => drawPipa(ctx, tick), [tick]);
   const drawPiedrasCb = useCallback((ctx) => drawPiedras(ctx), []);
@@ -618,7 +663,7 @@ function App() {
               className="house-canvas"
               w={W} h={H} scale={1}
               draw={drawHouseCb}
-              deps={[tick]}
+              deps={[tick, duende]}
               style={{ width: '100%', height: 'auto' }}
             />
 
