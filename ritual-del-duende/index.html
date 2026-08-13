@@ -211,24 +211,39 @@ const PAL = {
 };
 
 /* =========================================================================
-   AUDIO — motor ritual. Un único AudioContext compartido, creado recién al
-   primer gesto del usuario (requisito de los navegadores).
-   Grafo: droneBus (brasero) -> pipaFilter -> pipaShaper (bitcrush) -> master.
-   percBus (piedras) -> master, en paralelo, sin pasar por la pipa: son
-   golpes secos, no queremos que la pipa los ensucie.
+   AUDIO — motor ritual, organizado como groovebox: un pad/drone dinámico
+   (brasero), un arp dinámico (repisa), un elemento percusivo/secuenciable
+   (piedras) y un control de tempo (ventana) del que también cuelgan
+   reverb/delay. La pipa es el procesador que se les mete en el medio.
+   Todos comparten un único reloj (this.tempo) para que cambiar el tempo
+   en la ventana mueva a la vez la percusión y el arpegio.
+
+   Grafo:
+     droneBus (brasero) -> pipaFilter -> pipaShaper (bitcrush) -\
+     percBus  (piedras)                                          >-> mixBus -> master (seco)
+     arpBus   (repisa)                                          /              \
+                                                                                  -> reverbSend -> convolver -> delay (con feedback) -> master (mojado, lo abre la ventana)
    ========================================================================= */
 class RitualAudio {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.droneBus = null;   // suma de capas del brasero
+    this.mixBus = null;     // suma seca de las tres voces
+    this.droneBus = null;   // suma de capas del brasero (pad)
     this.pipaFilter = null; // low-pass que la Pipa cierra progresivamente
     this.pipaShaper = null; // bitcrush (WaveShaper con curva escalonada)
     this.percBus = null;    // percusión de las piedras
+    this.arpBus = null;     // arpegio de la repisa
+    this.reverbSend = null; // cuánto de la mezcla se va al reverb/delay (lo abre la ventana)
     this.noiseBuffer = null;
     this.brasero = { state: 0, layers: [null, null, null] };
     this.pipa = { state: 0 };
     this.piedras = { active: false, stepIndex: 0, nextStepTime: 0, schedulerId: null };
+    this.repisa = { state: 0, stepIndex: 0, nextStepTime: 0, schedulerId: null };
+    this.ventana = { state: 0 };
+    // reloj compartido: piedras y repisa leen tempo.stepDur en cada paso,
+    // así que cambiarlo desde la ventana los mueve a los dos al toque.
+    this.tempo = { state: 0, stepDur: RitualAudio.TEMPO_STEPS[0] };
   }
 
   ensure() {
@@ -241,10 +256,34 @@ class RitualAudio {
       this.master.connect(this.ctx.destination);
       this.master.gain.setTargetAtTime(0.7, this.ctx.currentTime, 1.2);
 
+      this.mixBus = this.ctx.createGain();
+      this.mixBus.gain.value = 1.0;
+      this.mixBus.connect(this.master); // camino seco, siempre presente
+
+      // reverb + delay: la ventana abre este envío. Impulso sintetizado
+      // (ruido con caída exponencial), nada de archivos externos.
+      this.reverbSend = this.ctx.createGain();
+      this.reverbSend.gain.value = 0; // cerrado hasta que se toque la ventana
+      this.mixBus.connect(this.reverbSend);
+
+      const convolver = this.ctx.createConvolver();
+      convolver.buffer = this.makeImpulse(2.6, 3.2);
+      this.reverbSend.connect(convolver);
+
+      const delay = this.ctx.createDelay(1.2);
+      delay.delayTime.value = 0.34;
+      const delayFeedback = this.ctx.createGain();
+      delayFeedback.gain.value = 0.32;
+      convolver.connect(delay);
+      delay.connect(delayFeedback);
+      delayFeedback.connect(delay);
+      delay.connect(this.master);
+      this.delayNode = delay;
+
       this.pipaShaper = this.ctx.createWaveShaper();
       this.pipaShaper.curve = RitualAudio.crushCurve(256); // "clara": sin recorte
       this.pipaShaper.oversample = 'none'; // el aliasing es parte del timbre
-      this.pipaShaper.connect(this.master);
+      this.pipaShaper.connect(this.mixBus);
 
       this.pipaFilter = this.ctx.createBiquadFilter();
       this.pipaFilter.type = 'lowpass';
@@ -258,7 +297,11 @@ class RitualAudio {
 
       this.percBus = this.ctx.createGain();
       this.percBus.gain.value = 0.8;
-      this.percBus.connect(this.master);
+      this.percBus.connect(this.mixBus);
+
+      this.arpBus = this.ctx.createGain();
+      this.arpBus.gain.value = 1.0;
+      this.arpBus.connect(this.mixBus);
 
       this.noiseBuffer = this.makeNoiseBuffer();
     }
@@ -270,6 +313,20 @@ class RitualAudio {
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  // respuesta al impulso sintetizada: ruido con caída exponencial. `decay`
+  // más alto = cola más larga, un bosque más grande afuera de la ventana.
+  makeImpulse(duration, decay) {
+    const len = Math.floor(this.ctx.sampleRate * duration);
+    const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      }
+    }
     return buf;
   }
 
@@ -391,7 +448,6 @@ class RitualAudio {
      nunca cae igual dos vueltas seguidas. */
   static STEP_PATTERN = ['piedra', 'madera', null, 'hueso', 'madera', null];
   static BROKEN_STEP = 2;
-  static STEP_DUR = 0.28;
   static HIT_DEFS = {
     madera: { freq: 900,  Q: 3, decay: 0.09 },
     piedra: { freq: 2200, Q: 6, decay: 0.05 },
@@ -443,7 +499,7 @@ class RitualAudio {
       this.piedras.schedulerId = setInterval(() => {
         while (this.piedras.nextStepTime < this.ctx.currentTime + lookahead) {
           this.scheduleStep(this.piedras.stepIndex, this.piedras.nextStepTime);
-          this.piedras.nextStepTime += RitualAudio.STEP_DUR;
+          this.piedras.nextStepTime += this.tempo.stepDur; // reloj compartido
           this.piedras.stepIndex = (this.piedras.stepIndex + 1) % RitualAudio.STEP_PATTERN.length;
         }
       }, 25);
@@ -453,10 +509,89 @@ class RitualAudio {
     }
     return this.piedras.active;
   }
+
+  /* repisa, el arp: notas de un pequeño conjunto modal sin sensible (nada
+     de dominantes, como en el motor de armonía original) que van y vienen
+     sin repetirse en orden fijo — "dinámico" de verdad, no un patrón
+     cerrado. Cada nota lleva sus propias micro-variaciones: drift de
+     afinación, forma de onda al azar, y un pequeño delay de ataque —
+     exactamente lo que pedía la repisa en el diseño original. */
+  static ARP_NOTES = [220.00, 246.94, 261.63, 329.63, 392.00]; // A3 B3 C4 E4 G4
+  static ARP_DENSITY = [0, 0.45, 0.7, 0.95]; // probabilidad de que un paso suene, por estado
+  static ARP_DRIFT_CENTS = [0, 4, 9, 16];    // cuánto se desafina cada nota, por estado
+
+  playArpNote(freq, time, waveform, detuneCents, attackDelay, level) {
+    const t = time + attackDelay;
+    const osc = this.ctx.createOscillator();
+    osc.type = waveform;
+    osc.frequency.value = freq;
+    osc.detune.value = detuneCents;
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(level, t + 0.02); // ataque corto pero no un click
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+
+    osc.connect(g);
+    g.connect(this.arpBus);
+    osc.start(t);
+    osc.stop(t + 0.6);
+  }
+
+  scheduleArpStep(time) {
+    const density = RitualAudio.ARP_DENSITY[this.repisa.state];
+    if (Math.random() > density) return; // el arp respira, no rellena todo
+    const drift = RitualAudio.ARP_DRIFT_CENTS[this.repisa.state];
+    const freq = RitualAudio.ARP_NOTES[Math.floor(Math.random() * RitualAudio.ARP_NOTES.length)];
+    const waveform = Math.random() < 0.5 ? 'triangle' : 'sawtooth';
+    const detune = (Math.random() * 2 - 1) * drift;
+    const attackDelay = Math.random() * 0.04;
+    this.playArpNote(freq, time, waveform, detune, attackDelay, 0.11);
+  }
+
+  /* cicla la repisa: quieta -> dispersa -> tejida -> densa -> quieta.
+     Más estado = más notas y más drift, nunca golpea todo junto. */
+  cycleRepisa() {
+    this.ensure();
+    const next = (this.repisa.state + 1) % 4;
+    this.repisa.state = next;
+    if (next > 0 && !this.repisa.schedulerId) {
+      this.repisa.nextStepTime = this.ctx.currentTime + 0.05;
+      const lookahead = 0.1;
+      this.repisa.schedulerId = setInterval(() => {
+        while (this.repisa.nextStepTime < this.ctx.currentTime + lookahead) {
+          this.scheduleArpStep(this.repisa.nextStepTime);
+          this.repisa.nextStepTime += this.tempo.stepDur * 2; // el arp respira más lento que la percusión
+        }
+      }, 25);
+    } else if (next === 0 && this.repisa.schedulerId) {
+      clearInterval(this.repisa.schedulerId);
+      this.repisa.schedulerId = null;
+    }
+    return next;
+  }
+
+  /* ventana: el único control de tempo de toda la casa, y a la vez el
+     reverb/delay que "abre la vista del bosque". Un solo gesto mueve las
+     dos cosas juntas: más lejos = más lento y más reverberado. */
+  static TEMPO_STEPS = [0.44, 0.32, 0.24, 0.17]; // segundos por paso, cerca -> lejos
+  static VENTANA_WET = [0, 0.16, 0.30, 0.46];
+
+  cycleVentana() {
+    this.ensure();
+    const next = (this.ventana.state + 1) % 4;
+    this.ventana.state = next;
+    this.tempo.state = next;
+    this.tempo.stepDur = RitualAudio.TEMPO_STEPS[next];
+    this.reverbSend.gain.setTargetAtTime(RitualAudio.VENTANA_WET[next], this.ctx.currentTime, 1.0);
+    return next;
+  }
 }
 
 const BRASERO_LABELS = ['apagado', 'brasas', 'fuego', 'pira'];
 const PIPA_LABELS = ['clara', 'velada', 'ahogada', 'sofocada'];
+const REPISA_LABELS = ['quieta', 'dispersa', 'tejida', 'densa'];
+const VENTANA_LABELS = ['cerca', 'lejos', 'más lejos', 'disuelta'];
 
 /* =========================================================================
    PIXEL ART — todo dibujado con fillRect sobre canvases chicos, escalados
@@ -700,15 +835,21 @@ function drawPiedras(ctx, active, tick) {
   if (active) px(ctx, 9, 2, 1, 1, PAL.amberLo); // un eco tenue del brasero
 }
 
-/* ---- ventana/rama: hueco en el tronco con niebla lentísima ---- */
-function drawVentana(ctx, tick) {
+/* ---- ventana/rama: hueco en el tronco con niebla lentísima. Cada toque
+   aleja la vista un paso más — y la niebla se mueve más despacio cuanto
+   más lejos está, en espejo del tempo (que también se hace más lento). ---- */
+function drawVentana(ctx, state, tick) {
   const W = 26, H = 16;
   ctx.clearRect(0, 0, W, H);
   px(ctx, 3, 2, 20, 12, PAL.grayLo);
   ditherPatch(ctx, 3, 2, 20, 12, PAL.gray, PAL.grayLo, 0.5, 3);
-  // niebla: banda que se desplaza en pasos muy espaciados
-  const fogX = (Math.floor(tick / 4) % 6) - 3;
+  // niebla: banda que se desplaza en pasos muy espaciados; a más estado,
+  // más lenta y más espesa (más lejos = todo más disuelto)
+  const fogSpeed = [4, 6, 9, 13][state];
+  const fogX = (Math.floor(tick / fogSpeed) % 6) - 3;
   px(ctx, 5 + fogX, 6, 12, 2, PAL.grayHi);
+  if (state >= 2) px(ctx, 5 + fogX, 8, 8, 1, PAL.gray);
+  if (state >= 3) px(ctx, 4 - fogX + 6, 4, 6, 1, PAL.grayHi);
   // marco / rama
   px(ctx, 1, 0, 2, 16, PAL.wallLo);
   px(ctx, 23, 0, 2, 16, PAL.wallLo);
@@ -716,15 +857,22 @@ function drawVentana(ctx, tick) {
   px(ctx, 27, 1, 2, 1, PAL.amberLo);
 }
 
-/* ---- repisa: tabla con frascos ---- */
-function drawRepisa(ctx) {
+/* ---- repisa, el arp: tabla con frascos. Cuando está "tejida"/"densa" un
+   frasco brilla apenas al azar, marcando que ahí vive el instrumento. ---- */
+function drawRepisa(ctx, state, tick) {
   const W = 20, H = 12;
   ctx.clearRect(0, 0, W, H);
   px(ctx, 0, 9, 20, 2, PAL.amberLo);
-  px(ctx, 2, 4, 3, 5, PAL.gray);
-  px(ctx, 7, 3, 3, 6, PAL.grayHi);
-  px(ctx, 12, 5, 3, 4, PAL.gray);
-  px(ctx, 16, 2, 3, 7, PAL.grayLo);
+  const jars = [
+    [2, 4, 3, 5, PAL.gray],
+    [7, 3, 3, 6, PAL.grayHi],
+    [12, 5, 3, 4, PAL.gray],
+    [16, 2, 3, 7, PAL.grayLo],
+  ];
+  jars.forEach(([x, y, w, h, c], i) => {
+    const lit = state > 0 && (tick + i * 3) % 9 === 0;
+    px(ctx, x, y, w, h, lit ? PAL.amberHi : c);
+  });
   px(ctx, 7, 2, 3, 1, PAL.amber);
 }
 
@@ -769,6 +917,8 @@ function App() {
   const [braseroState, setBraseroState] = useState(0);
   const [pipaState, setPipaState] = useState(0);
   const [piedrasActive, setPiedrasActive] = useState(false);
+  const [repisaState, setRepisaState] = useState(0);
+  const [ventanaState, setVentanaState] = useState(0);
   const [tick, setTick] = useState(0);
   const [lastTouched, setLastTouched] = useState(null);
   const [duende, setDuende] = useState(null); // { spot, pose, glintColor } | null — un frame nada más
@@ -830,6 +980,18 @@ function App() {
     setLastTouched(`piedras — ${active ? 'sonando' : 'quietas'}`);
   }, []);
 
+  const handleRepisa = useCallback(() => {
+    const next = audioRef.current.cycleRepisa();
+    setRepisaState(next);
+    setLastTouched(`repisa — ${REPISA_LABELS[next]}`);
+  }, []);
+
+  const handleVentana = useCallback(() => {
+    const next = audioRef.current.cycleVentana();
+    setVentanaState(next);
+    setLastTouched(`ventana — ${VENTANA_LABELS[next]} (tempo ${next})`);
+  }, []);
+
   const inertTouch = useCallback((label) => () => {
     setLastTouched(`${label} — aún dormido`);
   }, []);
@@ -839,8 +1001,8 @@ function App() {
   const drawBraseroCb = useCallback((ctx) => drawBrasero(ctx, braseroState, tick), [braseroState, tick]);
   const drawPipaCb = useCallback((ctx) => drawPipa(ctx, pipaState, tick), [pipaState, tick]);
   const drawPiedrasCb = useCallback((ctx) => drawPiedras(ctx, piedrasActive, tick), [piedrasActive, tick]);
-  const drawVentanaCb = useCallback((ctx) => drawVentana(ctx, tick), [tick]);
-  const drawRepisaCb = useCallback((ctx) => drawRepisa(ctx), []);
+  const drawVentanaCb = useCallback((ctx) => drawVentana(ctx, ventanaState, tick), [ventanaState, tick]);
+  const drawRepisaCb = useCallback((ctx) => drawRepisa(ctx, repisaState, tick), [repisaState, tick]);
   const drawLibroCb = useCallback((ctx) => drawLibro(ctx), []);
 
   return (
@@ -879,15 +1041,15 @@ function App() {
             />
             <HouseObject
               id="ventana" xPct={50} yPct={20} w={26} h={16} scale={6}
-              draw={drawVentanaCb} deps={[tick]}
-              onActivate={inertTouch('ventana / rama')}
-              label="ventana / rama" inert
+              draw={drawVentanaCb} deps={[ventanaState, tick]}
+              onActivate={handleVentana}
+              label={`ventana (${VENTANA_LABELS[ventanaState]})`}
             />
             <HouseObject
               id="repisa" xPct={83} yPct={46} w={20} h={12} scale={6}
-              draw={drawRepisaCb} deps={[]}
-              onActivate={inertTouch('repisa')}
-              label="repisa" inert
+              draw={drawRepisaCb} deps={[repisaState, tick]}
+              onActivate={handleRepisa}
+              label={`repisa (${REPISA_LABELS[repisaState]})`}
             />
             <HouseObject
               id="libro" xPct={13} yPct={83} w={16} h={12} scale={6}
