@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>El Último Ritual del Duende Sin Nombre</title>
+<style>
+  :root{
+    /* paleta fría, 4-5 tonos base + sombras/luces de cada uno */
+    --c-black:   #07090a;
+    --c-wall:    #12160f;
+    --c-gray:    #33362f;
+    --c-gray-lo: #22241f;
+    --c-green:   #3c5a3a;
+    --c-green-hi:#6d8a58;
+    --c-amber:   #6a5730;
+    --c-amber-hi:#8f7442;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--c-black);
+    color:var(--c-green-hi);
+    font-family: ui-monospace, "Courier New", monospace;
+    -webkit-font-smoothing:none;
+    font-smooth:never;
+    overflow:hidden;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  #root{ position:relative; width:100%; height:100%; }
+
+  /* ---------- CRT shell ---------- */
+  .crt-frame{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(ellipse at center, #0d100c 0%, #050605 78%, #020302 100%);
+  }
+  .crt-screen{
+    position:relative;
+    width:min(96vw, 960px);
+    aspect-ratio: 16/9.5;
+    background:var(--c-wall);
+    filter: contrast(1.08) saturate(0.55) brightness(0.96);
+    box-shadow: 0 0 0 2px #000, 0 0 40px rgba(0,0,0,0.85) inset, 0 0 60px rgba(0,0,0,0.6);
+    overflow:hidden;
+  }
+  .scanlines{
+    position:absolute; inset:0; pointer-events:none; z-index:40;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0.42) 0px, rgba(0,0,0,0.42) 1px,
+      rgba(0,0,0,0) 2px, rgba(0,0,0,0) 3px
+    );
+    mix-blend-mode:multiply;
+    opacity:0.65;
+  }
+  .vignette{
+    position:absolute; inset:0; pointer-events:none; z-index:41;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 88%, rgba(0,0,0,0.92) 100%);
+  }
+  .noise-overlay{
+    position:absolute; inset:0; pointer-events:none; z-index:42;
+    filter:url(#duende-noise);
+    opacity:0.06;
+    mix-blend-mode:overlay;
+  }
+  .dither-overlay{
+    position:absolute; inset:0; pointer-events:none; z-index:39;
+    background-image: repeating-linear-gradient(45deg,
+      rgba(255,255,255,0.035) 0px, rgba(255,255,255,0.035) 1px,
+      rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px);
+    mix-blend-mode:overlay;
+    opacity:0.5;
+  }
+  .flicker-veil{
+    position:absolute; inset:0; pointer-events:none; z-index:43;
+    background:#000; opacity:0;
+  }
+
+  /* ---------- escena ---------- */
+  .scene-wrap{
+    position:absolute; inset:0; z-index:1;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:flex-start;
+    padding: 10px 12px 6px;
+  }
+  .title-row{
+    text-align:center;
+    color:var(--c-green-hi);
+    letter-spacing:0.12em;
+    text-transform:lowercase;
+    font-size:11px;
+    opacity:0.8;
+    margin-bottom:2px;
+    text-shadow: 1px 0 0 rgba(139,116,66,0.35), -1px 0 0 rgba(60,90,58,0.35);
+  }
+  .story-line{
+    text-align:center;
+    color:var(--c-amber-hi);
+    font-size:9px;
+    letter-spacing:0.03em;
+    opacity:0.55;
+    margin-bottom:6px;
+    max-width:80%;
+    font-style:italic;
+  }
+  .house-stage{
+    position:relative;
+    width:100%;
+    max-width:640px;
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .house-canvas{
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    width:100%;
+    height:auto;
+    display:block;
+  }
+  .obj-btn{
+    position:absolute;
+    background:none; border:none; padding:0; margin:0;
+    cursor:pointer;
+    image-rendering:pixelated;
+    filter: drop-shadow(0 0 0 rgba(0,0,0,0));
+  }
+  .obj-btn:focus{ outline:none; }
+  .obj-btn canvas{
+    image-rendering:pixelated;
+    display:block;
+  }
+  .obj-btn.inert{ cursor: default; }
+
+  .status-row{
+    width:100%;
+    max-width:640px;
+    display:flex;
+    justify-content:space-between;
+    font-size:9px;
+    letter-spacing:0.04em;
+    color:var(--c-gray);
+    padding: 4px 2px 2px;
+  }
+  .status-row .active{ color:var(--c-green-hi); }
+
+  .enter-gate{
+    position:absolute; inset:0; z-index:50;
+    background:#05060590;
+    backdrop-filter: blur(0.5px);
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column;
+    cursor:pointer;
+  }
+  .enter-gate .glyph{
+    font-size:28px; color:var(--c-green-hi); opacity:0.85; margin-bottom:10px;
+    filter: drop-shadow(0 0 6px rgba(109,138,88,0.25));
+  }
+  .enter-gate .txt{
+    font-size:12px; letter-spacing:0.15em; text-transform:lowercase;
+    color:var(--c-amber-hi); opacity:0.9;
+  }
+  .enter-gate .sub{
+    margin-top:6px; font-size:9px; color:var(--c-gray); opacity:0.8;
+    max-width:70%; text-align:center;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<svg width="0" height="0" style="position:absolute">
+  <filter id="duende-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence id="duende-turb" type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" seed="3" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.5 0.5 0.5 0 0"/>
+  </filter>
+</svg>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" crossorigin></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
+
+/* =========================================================================
+   PALETA — familias de color acordadas: negro / gris / verde fósforo
+   quemado / ámbar apagado. Cada familia tiene una variante oscura y una
+   clara para poder sombrear el pixel art sin salir de la gama.
+   ========================================================================= */
+const PAL = {
+  black:   '#07090a',
+  wall:    '#12160f',
+  wallLo:  '#0b0e09',
+  gray:    '#33362f',
+  grayLo:  '#22241f',
+  grayHi:  '#45483f',
+  green:   '#3c5a3a',
+  greenLo: '#26391f',
+  greenHi: '#6d8a58',
+  amber:   '#6a5730',
+  amberLo: '#463a20',
+  amberHi: '#8f7442',
+  bone:    '#8a8570',
+};
+
+/* =========================================================================
+   AUDIO — motor ritual. Un único AudioContext compartido, creado recién al
+   primer gesto del usuario (requisito de los navegadores). El Brasero es el
+   único objeto con sonido real en esta primera etapa; el resto de los
+   objetos ya reservan su lugar en el grafo (bus del drone -> filtro de la
+   Pipa, todavía "abierto"/sin efecto -> master) para que sea fácil sumarlos
+   después sin rearmar el grafo entero.
+   ========================================================================= */
+class RitualAudio {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.droneBus = null;   // suma de capas del brasero
+    this.pipaFilter = null; // low-pass que la Pipa irá cerrando (fase 2)
+    this.brasero = { state: 0, layers: [null, null, null] };
+  }
+
+  ensure() {
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.0;
+      this.master.connect(this.ctx.destination);
+      this.master.gain.setTargetAtTime(0.7, this.ctx.currentTime, 1.2);
+
+      this.pipaFilter = this.ctx.createBiquadFilter();
+      this.pipaFilter.type = 'lowpass';
+      this.pipaFilter.frequency.value = 18000; // "abierto": sin filtrar, todavía
+      this.pipaFilter.Q.value = 0.4;
+      this.pipaFilter.connect(this.master);
+
+      this.droneBus = this.ctx.createGain();
+      this.droneBus.gain.value = 1.0;
+      this.droneBus.connect(this.pipaFilter);
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  /* capas del brasero: cada una es un par de osciladores desafinados con
+     un lfo lento sobre el detune, para que el drone respire en vez de
+     quedar clavado. */
+  static LAYER_DEFS = [
+    { freq: 55.0,  detune: 7,  t1: 'sawtooth', t2: 'square',   gain: 0.20, lfoHz: 0.06 },
+    { freq: 82.41, detune: -6, t1: 'sawtooth', t2: 'sawtooth', gain: 0.13, lfoHz: 0.045 },
+    { freq: 110.0, detune: 9,  t1: 'square',   t2: 'sawtooth', gain: 0.09, lfoHz: 0.08 },
+  ];
+
+  addBraseroLayer(i) {
+    const def = RitualAudio.LAYER_DEFS[i];
+    const now = this.ctx.currentTime;
+
+    const layerGain = this.ctx.createGain();
+    layerGain.gain.value = 0;
+    layerGain.connect(this.droneBus);
+    layerGain.gain.setTargetAtTime(def.gain, now, 2.4); // "ganancia gradual"
+
+    const osc1 = this.ctx.createOscillator();
+    osc1.type = def.t1;
+    osc1.frequency.value = def.freq;
+
+    const osc2 = this.ctx.createOscillator();
+    osc2.type = def.t2;
+    osc2.frequency.value = def.freq;
+    osc2.detune.value = def.detune;
+
+    // lfo lento de detune para que la capa no quede estática
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = def.lfoHz;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 5; // +/- 5 cents
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc1.detune);
+    lfoGain.connect(osc2.detune);
+
+    osc1.connect(layerGain);
+    osc2.connect(layerGain);
+    osc1.start();
+    osc2.start();
+    lfo.start();
+
+    this.brasero.layers[i] = { osc1, osc2, lfo, lfoGain, layerGain };
+  }
+
+  removeBraseroLayer(i) {
+    const layer = this.brasero.layers[i];
+    if (!layer) return;
+    const now = this.ctx.currentTime;
+    layer.layerGain.gain.setTargetAtTime(0, now, 1.6);
+    const { osc1, osc2, lfo } = layer;
+    setTimeout(() => {
+      try { osc1.stop(); osc2.stop(); lfo.stop(); } catch (e) {}
+    }, 3200);
+    this.brasero.layers[i] = null;
+  }
+
+  /* cicla el brasero: apagado -> brasas -> fuego -> pira -> apagado.
+     acumulativo (cada estado agrega una capa) pero sin ningún clímax:
+     nunca sube todo junto, nunca hay un "golpe" de volumen. */
+  toggleBrasero() {
+    this.ensure();
+    const prev = this.brasero.state;
+    const next = (prev + 1) % 4;
+    if (next > prev) {
+      this.addBraseroLayer(next - 1);
+    } else {
+      for (let i = 3; i >= 0; i--) {
+        if (this.brasero.layers[i]) this.removeBraseroLayer(i);
+      }
+    }
+    this.brasero.state = next;
+    return next;
+  }
+}
+
+const BRASERO_LABELS = ['apagado', 'brasas', 'fuego', 'pira'];
+
+/* =========================================================================
+   PIXEL ART — todo dibujado con fillRect sobre canvases chicos, escalados
+   sin suavizado (image-rendering:pixelated). Nada de assets externos.
+   Los "frames" cambian de golpe (setInterval discreto), nunca con
+   transición: es la estética pedida ("pasos discretos, bruscos").
+   ========================================================================= */
+function PixelCanvas({ draw, w, h, scale, className, style, onClick, title, deps = [] }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+    draw(ctx);
+    // eslint-disable-next-line
+  }, deps);
+  return (
+    <canvas
+      ref={ref}
+      width={w}
+      height={h}
+      className={className}
+      style={{ ...style, width: w * scale, height: h * scale }}
+      onClick={onClick}
+      title={title}
+    />
+  );
+}
+
+function px(ctx, x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+}
+
+// ruido de dithering determinístico (no Math.random puro, para que sea
+// estable entre renders salvo que le pasemos una seed distinta)
+function seeded(seed) {
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+function ditherPatch(ctx, x, y, w, h, colorA, colorB, density, seed) {
+  const rnd = seeded(seed);
+  for (let yy = 0; yy < h; yy++) {
+    for (let xx = 0; xx < w; xx++) {
+      if (rnd() < density) {
+        ctx.fillStyle = (xx + yy) % 2 === 0 ? colorA : colorB;
+        ctx.fillRect(x + xx, y + yy, 1, 1);
+      }
+    }
+  }
+}
+
+/* ---- fondo: casa-hueco de árbol, vista de corte interior ---- */
+function drawHouse(ctx, W, H, tick) {
+  px(ctx, 0, 0, W, H, PAL.black);
+
+  // pared interior del tronco: arco irregular
+  ctx.fillStyle = PAL.wall;
+  ctx.beginPath();
+  ctx.moveTo(10, H);
+  ctx.lineTo(6, H * 0.35);
+  ctx.quadraticCurveTo(W * 0.5, -H * 0.12, W - 6, H * 0.35);
+  ctx.lineTo(W - 10, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // vetas de madera (arcos concéntricos, quebrados a propósito)
+  ctx.strokeStyle = PAL.wallLo;
+  ctx.lineWidth = 1;
+  for (let r = 1; r < 7; r++) {
+    ctx.beginPath();
+    const rr = r * 10;
+    ctx.moveTo(W / 2 - rr, H + 4);
+    ctx.quadraticCurveTo(W / 2, H * 0.4 - rr * 0.5, W / 2 + rr, H + 4);
+    ctx.stroke();
+  }
+
+  // piso
+  px(ctx, 0, H - 20, W, 20, PAL.grayLo);
+  ditherPatch(ctx, 0, H - 20, W, 20, PAL.gray, PAL.grayLo, 0.35, 11 + tick);
+
+  // raíces colgando del techo, asimétricas
+  ctx.strokeStyle = PAL.greenLo;
+  ctx.lineWidth = 1;
+  [ [W*0.22, 2], [W*0.48, -2], [W*0.7, 4], [W*0.86, 0] ].forEach(([x, off], i) => {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.quadraticCurveTo(x + 3 + off, 10 + i, x - 2, 22 + i * 2);
+    ctx.stroke();
+  });
+
+  // textura de humo viejo sobre las paredes
+  ditherPatch(ctx, 4, 4, W - 8, H - 26, PAL.wallLo, PAL.wall, 0.06, 91 + tick);
+}
+
+/* ---- brasero: 4 estados, 2 frames de parpadeo cada uno ---- */
+function drawBrasero(ctx, state, tick) {
+  const W = 22, H = 20;
+  ctx.clearRect(0, 0, W, H);
+
+  // base de piedra
+  px(ctx, 4, 14, 14, 3, PAL.grayLo);
+  px(ctx, 5, 12, 12, 2, PAL.gray);
+  px(ctx, 6, 10, 10, 2, PAL.grayHi);
+  // patas
+  px(ctx, 5, 17, 2, 2, PAL.grayLo);
+  px(ctx, 15, 17, 2, 2, PAL.grayLo);
+
+  if (state === 0) {
+    // apagado: brasas frías, sin luz
+    px(ctx, 8, 9, 6, 1, PAL.grayLo);
+    return;
+  }
+
+  const flick = tick % 2 === 0;
+  const embers = PAL.amber;
+  const emberHi = PAL.amberHi;
+  const flame = PAL.green;
+  const flameHi = PAL.greenHi;
+
+  // brasas (siempre presentes desde estado 1)
+  px(ctx, 8, 9, 6, 1, flick ? embers : emberHi);
+  px(ctx, 9, 8, 4, 1, flick ? emberHi : embers);
+
+  if (state >= 2) {
+    // fuego: lenguas bajas
+    px(ctx, 9, 5, 1, 3, flame);
+    px(ctx, 11, 4, 1, 4, flameHi);
+    px(ctx, 12, 6, 1, 2, flame);
+    if (flick) px(ctx, 10, 6, 1, 2, flameHi);
+  }
+
+  if (state >= 3) {
+    // pira: llama alta, irregular, con un pixel suelto de ceniza
+    px(ctx, 10, 1, 1, 3, flameHi);
+    px(ctx, 8, 2, 1, 2, flame);
+    px(ctx, 13, 2, 1, 3, flame);
+    px(ctx, 11, 0, 1, 1, flick ? flameHi : flame);
+    if (!flick) px(ctx, 6, 3, 1, 1, PAL.gray); // chispa/ceniza que se va
+  }
+}
+
+/* ---- pipa: forma quebrada, cazoleta y boquilla ---- */
+function drawPipa(ctx, tick) {
+  const W = 18, H = 14;
+  ctx.clearRect(0, 0, W, H);
+  px(ctx, 2, 8, 9, 2, PAL.amberLo);
+  px(ctx, 9, 4, 2, 6, PAL.amberLo);
+  px(ctx, 10, 3, 3, 2, PAL.amber);
+  ditherPatch(ctx, 2, 8, 9, 2, PAL.amber, PAL.amberLo, 0.4, 7);
+  if (tick % 6 === 0) px(ctx, 12, 1, 1, 1, PAL.grayHi); // humo, casi nunca
+}
+
+/* ---- piedras: cluster irregular, una siempre "distinta" ---- */
+function drawPiedras(ctx) {
+  const W = 20, H = 10;
+  ctx.clearRect(0, 0, W, H);
+  const stones = [
+    [1, 5, 4, 3, PAL.gray],
+    [5, 6, 3, 2, PAL.grayLo],
+    [8, 4, 5, 4, PAL.grayHi],
+    [13, 6, 3, 3, PAL.gray],
+    [16, 5, 3, 3, PAL.grayLo],
+  ];
+  stones.forEach(([x, y, w, h, c]) => px(ctx, x, y, w, h, c));
+  // la piedra rota: hueso pálido, nunca en el mismo lugar dos veces iguales
+  px(ctx, 9, 3, 2, 1, PAL.bone);
+}
+
+/* ---- ventana/rama: hueco en el tronco con niebla lentísima ---- */
+function drawVentana(ctx, tick) {
+  const W = 26, H = 16;
+  ctx.clearRect(0, 0, W, H);
+  px(ctx, 3, 2, 20, 12, PAL.grayLo);
+  ditherPatch(ctx, 3, 2, 20, 12, PAL.gray, PAL.grayLo, 0.5, 3);
+  // niebla: banda que se desplaza en pasos muy espaciados
+  const fogX = (Math.floor(tick / 4) % 6) - 3;
+  px(ctx, 5 + fogX, 6, 12, 2, PAL.grayHi);
+  // marco / rama
+  px(ctx, 1, 0, 2, 16, PAL.wallLo);
+  px(ctx, 23, 0, 2, 16, PAL.wallLo);
+  px(ctx, 24, 3, 4, 1, PAL.greenLo);
+  px(ctx, 27, 1, 2, 1, PAL.greenLo);
+}
+
+/* ---- repisa: tabla con frascos ---- */
+function drawRepisa(ctx) {
+  const W = 20, H = 12;
+  ctx.clearRect(0, 0, W, H);
+  px(ctx, 0, 9, 20, 2, PAL.amberLo);
+  px(ctx, 2, 4, 3, 5, PAL.gray);
+  px(ctx, 7, 3, 3, 6, PAL.grayHi);
+  px(ctx, 12, 5, 3, 4, PAL.gray);
+  px(ctx, 16, 2, 3, 7, PAL.grayLo);
+  px(ctx, 7, 2, 3, 1, PAL.amber);
+}
+
+/* ---- libro sin título: tapa gastada, sin letras ---- */
+function drawLibro(ctx) {
+  const W = 16, H = 12;
+  ctx.clearRect(0, 0, W, H);
+  px(ctx, 1, 2, 14, 9, PAL.amberLo);
+  ditherPatch(ctx, 1, 2, 14, 9, PAL.amber, PAL.amberLo, 0.3, 5);
+  px(ctx, 1, 2, 14, 1, PAL.grayLo);
+  px(ctx, 1, 10, 14, 1, PAL.grayLo);
+  // mancha de humedad
+  px(ctx, 9, 5, 3, 3, PAL.wallLo);
+  px(ctx, 10, 4, 1, 1, PAL.wallLo);
+}
+
+/* =========================================================================
+   OBJETO INTERACTIVO GENÉRICO
+   ========================================================================= */
+function HouseObject({ id, xPct, yPct, w, h, scale, draw, deps, onActivate, active, label, inert }) {
+  return (
+    <button
+      className={"obj-btn" + (inert ? " inert" : "")}
+      style={{ left: `${xPct}%`, top: `${yPct}%`, transform: 'translate(-50%,-50%)' }}
+      onClick={onActivate}
+      title={inert ? `${label} · aún dormido` : label}
+      aria-label={label}
+    >
+      <PixelCanvas w={w} h={h} scale={scale} draw={draw} deps={deps} />
+    </button>
+  );
+}
+
+/* =========================================================================
+   APP
+   ========================================================================= */
+function App() {
+  const audioRef = useRef(null);
+  if (!audioRef.current) audioRef.current = new RitualAudio();
+
+  const [entered, setEntered] = useState(false);
+  const [braseroState, setBraseroState] = useState(0);
+  const [tick, setTick] = useState(0);
+  const [lastTouched, setLastTouched] = useState(null);
+
+  // reloj de frames discreto: TODO en la escena se redibuja a saltos,
+  // nunca con transición css.
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 260);
+    return () => clearInterval(id);
+  }, []);
+
+  // ruido crt: reposiciona el filtro de turbulencia a saltos (estática)
+  useEffect(() => {
+    const turb = document.getElementById('duende-turb');
+    const id = setInterval(() => {
+      turb.setAttribute('seed', String(Math.floor(Math.random() * 999)));
+    }, 180);
+    return () => clearInterval(id);
+  }, []);
+
+  const enter = useCallback(() => {
+    audioRef.current.ensure();
+    setEntered(true);
+  }, []);
+
+  const handleBrasero = useCallback(() => {
+    const next = audioRef.current.toggleBrasero();
+    setBraseroState(next);
+    setLastTouched(`brasero — ${BRASERO_LABELS[next]}`);
+  }, []);
+
+  const inertTouch = useCallback((label) => () => {
+    setLastTouched(`${label} — aún dormido`);
+  }, []);
+
+  const W = 200, H = 120;
+  const drawHouseCb = useCallback((ctx) => drawHouse(ctx, W, H, tick), [tick]);
+  const drawBraseroCb = useCallback((ctx) => drawBrasero(ctx, braseroState, tick), [braseroState, tick]);
+  const drawPipaCb = useCallback((ctx) => drawPipa(ctx, tick), [tick]);
+  const drawPiedrasCb = useCallback((ctx) => drawPiedras(ctx), []);
+  const drawVentanaCb = useCallback((ctx) => drawVentana(ctx, tick), [tick]);
+  const drawRepisaCb = useCallback((ctx) => drawRepisa(ctx), []);
+  const drawLibroCb = useCallback((ctx) => drawLibro(ctx), []);
+
+  return (
+    <div className="crt-frame">
+      <div className="crt-screen">
+        <div className="scene-wrap">
+          <div className="title-row">el último ritual del duende sin nombre</div>
+          <div className="story-line">la casa-hueco no tiene puerta, sólo memoria de haber tenido una.</div>
+
+          <div className="house-stage">
+            <PixelCanvas
+              className="house-canvas"
+              w={W} h={H} scale={1}
+              draw={drawHouseCb}
+              deps={[tick]}
+              style={{ width: '100%', height: 'auto' }}
+            />
+
+            <HouseObject
+              id="brasero" xPct={50} yPct={78} w={22} h={20} scale={7}
+              draw={drawBraseroCb} deps={[braseroState, tick]}
+              onActivate={handleBrasero}
+              label={`brasero (${BRASERO_LABELS[braseroState]})`}
+            />
+            <HouseObject
+              id="pipa" xPct={18} yPct={58} w={18} h={14} scale={6}
+              draw={drawPipaCb} deps={[tick]}
+              onActivate={inertTouch('pipa')}
+              label="pipa" inert
+            />
+            <HouseObject
+              id="piedras" xPct={74} yPct={86} w={20} h={10} scale={6}
+              draw={drawPiedrasCb} deps={[]}
+              onActivate={inertTouch('piedras')}
+              label="piedras" inert
+            />
+            <HouseObject
+              id="ventana" xPct={50} yPct={20} w={26} h={16} scale={6}
+              draw={drawVentanaCb} deps={[tick]}
+              onActivate={inertTouch('ventana / rama')}
+              label="ventana / rama" inert
+            />
+            <HouseObject
+              id="repisa" xPct={83} yPct={46} w={20} h={12} scale={6}
+              draw={drawRepisaCb} deps={[]}
+              onActivate={inertTouch('repisa')}
+              label="repisa" inert
+            />
+            <HouseObject
+              id="libro" xPct={13} yPct={83} w={16} h={12} scale={6}
+              draw={drawLibroCb} deps={[]}
+              onActivate={inertTouch('libro sin título')}
+              label="libro sin título" inert
+            />
+          </div>
+
+          <div className="status-row">
+            <span>{lastTouched ? lastTouched : 'tocá algo.'}</span>
+            <span className={braseroState > 0 ? 'active' : ''}>
+              brasero:{braseroState}/3
+            </span>
+          </div>
+        </div>
+
+        <div className="dither-overlay" />
+        <div className="scanlines" />
+        <div className="vignette" />
+        <div className="noise-overlay" />
+
+        {!entered && (
+          <div className="enter-gate" onClick={enter}>
+            <div className="glyph">░▓░</div>
+            <div className="txt">tocá para entrar</div>
+            <div className="sub">el sonido no arranca solo: hace falta un gesto para despertar la casa.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
