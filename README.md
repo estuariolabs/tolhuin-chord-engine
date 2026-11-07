@@ -34,13 +34,23 @@ Requiere un compilador C++ de host (`g++` de MinGW/WinLibs, o `clang++`).
 powershell -ExecutionPolicy Bypass -File test\run_tests.ps1
 ```
 
+**macOS y Linux:**
+
+```bash
+sh test/run_tests.sh
+```
+
 **Manual (cualquier plataforma):**
 
 ```bash
 g++ -std=c++17 -I. test/test_harmony.cpp harmony.cpp -o test_harmony && ./test_harmony
 g++ -std=c++17 -I. test/test_dsp.cpp     dsp.cpp     -o test_dsp     && ./test_dsp
 g++ -std=c++17 -I. test/test_evloop.cpp  evloop.cpp  -o test_evloop  && ./test_evloop
+g++ -std=c++17 -I. test/test_voicelead.cpp harmony.cpp -o test_voicelead && ./test_voicelead
 ```
+
+Este repo se genera desde el firmware con `tools/sincronizar_engine.py` (en
+`tolhuin-chord`): los cambios se hacen allá y se copian acá.
 
 Los tests son deterministas (sin oído): verifican ausencia de NaN/clip, RMS,
 presencia de fundamentales (Goertzel), timing de la grilla, fase del reloj,
